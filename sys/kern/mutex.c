@@ -58,6 +58,16 @@ Mutex_Lock(Mutex *mtx)
     ASSERT(Critical_Level() == 0);
 
     /* XXXFILLMEIN */
+    Spinlock_Lock(&mtx->lock);
+    while (mtx->status == MTX_STATUS_LOCKED) {
+        WaitChannel_Lock(&mtx->chan);
+        Spinlock_Unlock(&mtx->lock);
+        WaitChannel_Sleep(&mtx->chan);
+        Spinlock_Lock(&mtx->lock);
+    }
+    mtx->status = MTX_STATUS_LOCKED;
+    mtx->owner = curProc[CPU()];
+    Spinlock_Unlock(&mtx->lock);
 }
 
 /**
@@ -70,8 +80,16 @@ int
 Mutex_TryLock(Mutex *mtx)
 {
     /* XXXFILLMEIN */
-
-    return 0;
+    int rtv = 0;
+    Spinlock_Lock(&mtx->lock);
+    if (mtx->status == MTX_STATUS_UNLOCKED) {
+        mtx->status = MTX_STATUS_LOCKED;
+        mtx->owner = curProc[CPU()];
+    } else {
+        rtv = EBUSY;
+    }
+    Spinlock_Unlock(&mtx->lock);
+    return rtv;
 }
 
 /**
@@ -83,7 +101,11 @@ void
 Mutex_Unlock(Mutex *mtx)
 {
     /* XXXFILLMEIN */
-
+    Spinlock_Lock(&mtx->lock);
+    mtx->status = MTX_STATUS_UNLOCKED;
+    mtx->owner = NULL;
+    WaitChannel_Wake(&mtx->chan);
+    Spinlock_Unlock(&mtx->lock);
     return;
 }
 

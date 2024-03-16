@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <errno.h>
@@ -210,16 +211,35 @@ Process_Wait(Process *proc, uint64_t pid)
     uint64_t status;
 
     // XXXFILLMEIN
-    /* 
-     * Dummy waitpid implementation that pretends the 
-     * process has already exited. Remove and replace
-     * with the actual implementation from the assignment 
-     * description.
-     */
-    /* XXXREMOVE START */
-    ASSERT(pid != 0);
-    return SYSCALL_PACK(0, pid << 16);
-    /* XXXREMOVE END */
+    Mutex_Lock(&proc->zombieProcLock);
+    if (pid == 0) {
+        while (true) {
+            if (!TAILQ_EMPTY(&proc->zombieProc)) {
+                p = TAILQ_FIRST(&proc->zombieProc);
+                TAILQ_REMOVE(&proc->zombieProc, p, siblingList);
+                break;
+            }
+            CV_Wait(&proc->zombieProcCV, &proc->zombieProcLock);
+        }
+    } else {
+        p = Process_Lookup(pid);
+        Process *tmp = NULL;
+        while (true) {
+            bool found = false;
+            TAILQ_FOREACH(tmp, &proc->zombieProc, siblingList) {
+                if (tmp->pid == pid) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                CV_Wait(&p->zombieProcPCV, &proc->zombieProcLock);
+            else break;
+        }
+        TAILQ_REMOVE(&proc->zombieProc, p, siblingList);
+        Process_Release(p);
+    }
+    Mutex_Unlock(&proc->zombieProcLock);
 
     status = (p->pid << 16) | (p->exitCode & 0xff);
 
