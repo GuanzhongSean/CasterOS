@@ -125,6 +125,26 @@ Syscall_Spawn(uint64_t user_path, uint64_t user_argv)
     }
 
     /* XXXFILLMEIN: Load the ELF headers into the page. */
+    file = VFS_Lookup(path);
+    if (!file) {
+      PAlloc_Release(arg);
+      return SYSCALL_PACK(ENOENT, 0);
+    }
+
+    status = VFS_Open(file);
+    if (status < 0) {
+      PAlloc_Release(pg);
+      PAlloc_Release(arg);
+      return SYSCALL_PACK(status, 0);
+    }
+
+    status = VFS_Read(file, pg, 0, 1024);
+    if (status < 0) {
+      VFS_Close(file);
+      PAlloc_Release(pg);
+      PAlloc_Release(arg);
+      return SYSCALL_PACK(EIO, 0);
+    }
 
     if (!Loader_CheckHeader(pg)) {
 	VFS_Close(file);
@@ -147,6 +167,7 @@ Syscall_Spawn(uint64_t user_path, uint64_t user_argv)
     Handle_Add(proc, handle);
 
     Loader_Load(thr, file, pg, 1024);
+    VFS_Close(file);
 
     /* Initialize the trap frame for entering into the process. */
     Thread_SetupUThread(thr, proc->entrypoint, MEM_USERSPACE_STKTOP - PGSIZE);
@@ -156,6 +177,21 @@ Syscall_Spawn(uint64_t user_path, uint64_t user_argv)
     uintptr_t offset = sizeof(uintptr_t)*8;
 
     /* XXXFILLMEIN: Export the argument array out to the new application. */
+    char *outarg = argstart;
+    uintptr_t *outarray = (uintptr_t *)argstart;
+    uintptr_t *inarray = (uintptr_t *)arg;
+    memset(outarray, 0, sizeof(uintptr_t) * 8);
+    for (int i = 1; i <= 8; i++) {
+      if (!inarray[i]) {
+        outarray[0] = i - 1;
+        break;
+      }
+      char *arg_str = (char *)inarray[i];
+      int len = strlen(arg_str) + 1;
+      memcpy(outarg + offset, arg_str, len);
+      outarray[i] = MEM_USERSPACE_STKTOP - PGSIZE + offset;
+      offset += len;
+    }
 
     Sched_SetRunnable(thr);
 
