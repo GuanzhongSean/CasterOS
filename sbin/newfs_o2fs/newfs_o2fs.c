@@ -124,10 +124,12 @@ AppendEmpty(void)
 
 ObjID *AddFile(const char *file)
 {
-    int i = 0;
+    int i = 0, ind_i = 0;
+    uint64_t ind_offset;
     int fd;
     ObjID *id = malloc(sizeof(ObjID));
     BNode node;
+    BInd bind;
 
     memset(id, 0, sizeof(*id));
     memset(&node, 0, sizeof(node));
@@ -151,10 +153,21 @@ ObjID *AddFile(const char *file)
 	    break;
 	}
 
-	node.direct[i].device = 0;
-	node.direct[i].offset = AppendBlock(tempbuf, len);
+    if (i == 0) {
+        ind_offset = AppendEmpty();
+        memset(&bind, 0, sizeof(bind));
+        node.indirect[ind_i].device = 0;
+        node.indirect[ind_i].offset = ind_offset;
+    }
+	bind.direct[i].device = 0;
+	bind.direct[i].offset = AppendBlock(tempbuf, len);
 	node.size += (uint64_t)len;
 	i += 1;
+    FlushBlock(ind_offset, &bind, blockSize);
+    if (i == O2FS_DIRECT_PTR) {
+        i = 0;
+        ind_i++;
+    }
     }
     close(fd);
 
@@ -175,6 +188,7 @@ ObjID *AddDirectory()
     int entry = 0;
     ObjID *id = malloc(sizeof(ObjID));
     BNode node;
+    BInd bind;
 
     while (1)
     {
@@ -232,8 +246,14 @@ ObjID *AddDirectory()
     node.versionMajor = O2FS_VERSION_MAJOR;
     node.versionMinor = O2FS_VERSION_MINOR;
     node.size = size;
-    node.direct[0].device = 0;
-    node.direct[0].offset = offset;
+    uint64_t ind_offset = AppendEmpty();
+    memset(&bind, 0, sizeof(bind));
+    node.indirect[0].device = 0;
+    node.indirect[0].offset = ind_offset;
+    bind.direct[0].device = 0;
+    bind.direct[0].offset = offset;
+    FlushBlock(ind_offset, &bind, blockSize);
+
     uint64_t nodeoff = AppendBlock(&node, sizeof(node));
 
     memset(id, 0, sizeof(*id));

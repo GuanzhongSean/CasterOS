@@ -76,6 +76,13 @@ typedef struct BPtr {
 
 #define O2FS_DIRECT_PTR		(64)
 
+typedef struct BInd {
+    BPtr direct[O2FS_DIRECT_PTR];
+} BInd;
+
+
+#define O2FS_INDIRECT_PTR		(64)
+
 /*
  * Block Nodes: Contain indirect pointers to pieces of a file
  */
@@ -87,7 +94,7 @@ typedef struct BNode
     uint32_t		flags;
     uint64_t		size;
 
-    BPtr		direct[O2FS_DIRECT_PTR];
+    BPtr		indirect[O2FS_INDIRECT_PTR];
 } BNode;
 
 #define BNODE_MAGIC	"BLOKNODE"

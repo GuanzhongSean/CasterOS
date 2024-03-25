@@ -263,24 +263,38 @@ int
 O2FSGrowVNode(VNode *vn, uint64_t filesz)
 {
     VFS *vfs = vn->vfs;
-    BufCacheEntry *vnEntry = (BufCacheEntry *)vn->fsptr;
+    BufCacheEntry *vnEntry = (BufCacheEntry *)vn->fsptr, *ient;
     BNode *bn = vnEntry->buffer;
+    BInd *bind;
+    int status;
     uint64_t blkstart = (bn->size + vfs->blksize - 1) / vfs->blksize;
 
-    if (filesz > (vfs->blksize * O2FS_DIRECT_PTR))
+    if (filesz > (vfs->blksize * O2FS_DIRECT_PTR * O2FS_INDIRECT_PTR))
 	return -EINVAL;
 
     for (int i = blkstart; i < ((filesz + vfs->blksize - 1) / vfs->blksize); i++) {
-	if (bn->direct[i].offset != 0)
-		continue;
-
-	uint64_t blkno = O2FSBAlloc(vfs);
-	if (blkno == 0) {
-		return -ENOSPC;
-	}
-
-	bn->direct[i].offset = blkno * vfs->blksize;
-
+        int ind_i = i / O2FS_DIRECT_PTR;
+        int dir_i = i % O2FS_DIRECT_PTR;
+        if (bn->indirect[ind_i].offset == 0) {
+            uint64_t ind_blkno = O2FSBAlloc(vfs);
+            if (ind_blkno == 0) return -ENOSPC;
+            bn->indirect[ind_i].offset = ind_blkno * vfs->blksize;
+            status = BufCache_Read(vn->disk, bn->indirect[ind_i].offset, &ient);
+            memset(ient->buffer, 0, sizeof(BInd));
+        } else {
+            status = BufCache_Read(vn->disk, bn->indirect[ind_i].offset, &ient);
+        }
+        if (status < 0) return status;
+        bind = ient->buffer;
+        if (bind->direct[dir_i].offset != 0) {
+            BufCache_Release(ient);
+            continue;
+        }
+        uint64_t blkno = O2FSBAlloc(vfs);
+        if (blkno == 0) return -ENOSPC;
+        bind->direct[dir_i].offset = blkno * vfs->blksize;
+        BufCache_Write(ient);
+        BufCache_Release(ient);
     }
 
     DLOG(o2fs, "Growing: %d\n", filesz);
@@ -326,13 +340,17 @@ int
 O2FSResolveBuf(VNode *vn, uint64_t b, BufCacheEntry **dentp)
 {
     BufCacheEntry *vnent = (BufCacheEntry *)vn->fsptr;
-    BufCacheEntry *dent;
+    BufCacheEntry *ient, *dent;
     BNode *bn = vnent->buffer;
     int status;
+    int ind_i = b / O2FS_DIRECT_PTR;
+    int i = b % O2FS_DIRECT_PTR;
 
-    status = BufCache_Read(vn->disk, bn->direct[b].offset, &dent);
-    if (status < 0)
-        return status;
+    status = BufCache_Read(vn->disk, bn->indirect[ind_i].offset, &ient);
+    if (status < 0) return status;
+    BInd *bind = ient->buffer;
+    status = BufCache_Read(vn->disk, bind->direct[i].offset, &dent);
+    BufCache_Release(ient);
 
     *dentp = dent;
 
